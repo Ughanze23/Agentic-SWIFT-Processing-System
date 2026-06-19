@@ -20,7 +20,7 @@ class ExplainabilityLogger:
     then flushes one JSONL record per message at the end of the run.
     """
 
-    def __init__(self, filepath: str = "explainability.jsonl"):
+    def __init__(self, filepath: str = "audits/explainability.jsonl"):
         self.filepath = filepath
         self.run_id = str(uuid.uuid4())
         self._records: Dict[str, Dict] = {}
