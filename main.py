@@ -103,21 +103,26 @@ class SWIFTProcessingSystem:
         print("STEP 4: ORCHESTRATOR-WORKER PATTERN")
         print("=" * 60)
 
+        results = {}
+
         # Run 1: Non-fraudulent messages
-        # clean_messages = [msg for msg in messages if msg.get('fraud_status') != "FRAUDULENT"]
+        print("\n--- Run 1: Non-fraudulent messages ---")
+        clean_messages = [msg for msg in messages if msg.get('fraud_status') != "FRAUDULENT"]
+        results['run_1_non_fraudulent'] = self.orchestrator_worker.process_with_orchestrator(clean_messages)
 
         # Run 2: High-value transactions (amount > 50000)
-        clean_messages = []
+        print("\n--- Run 2: High-value transactions (> 50000) ---")
+        high_value_messages = []
         for msg in messages:
             try:
                 amount = float(msg.get('amount', '0').split()[0])
                 if amount > 50000:
-                    clean_messages.append(msg)
+                    high_value_messages.append(msg)
             except (ValueError, TypeError):
                 pass
+        results['run_2_high_value'] = self.orchestrator_worker.process_with_orchestrator(high_value_messages)
 
-        # Process with orchestrator
-        return self.orchestrator_worker.process_with_orchestrator(clean_messages)
+        return results
         
     
     def run(self):
@@ -142,7 +147,12 @@ class SWIFTProcessingSystem:
             self.explainability_logger.log_prompt_chaining(processed_messages, chain_results)
 
             orchestrator_results = self.process_with_orchestrator_worker(processed_messages)
-            self.explainability_logger.log_orchestrator_worker(orchestrator_results)
+            self.explainability_logger.log_orchestrator_worker(
+                orchestrator_results.get('run_1_non_fraudulent')
+            )
+            self.explainability_logger.log_orchestrator_worker(
+                orchestrator_results.get('run_2_high_value')
+            )
 
             self.explainability_logger.flush()
 
