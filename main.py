@@ -6,6 +6,7 @@ This is the main integration point where all agent patterns work together
 to process SWIFT messages through a complete pipeline.
 """
 
+import logging
 from typing import List, Dict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -146,6 +147,23 @@ class SWIFTProcessingSystem:
             raise
 
 
+def configure_logging():
+    """Configure logging to output to both console and file."""
+    log_format = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+    date_format = "%Y-%m-%d %H:%M:%S"
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format=log_format,
+        datefmt=date_format,
+        handlers=[
+            logging.StreamHandler(),
+            logging.FileHandler("swift_processing.log", mode="a")
+        ]
+    )
+
+
 if __name__ == "__main__":
+    configure_logging()
     system = SWIFTProcessingSystem()
     system.run()
