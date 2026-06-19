@@ -37,10 +37,15 @@ class SWIFTProcessingSystem:
     
     def generate_swift_messages(self) -> List[Dict]:
         """Generate SWIFT messages for testing"""
-        messages = self.swift_generator.generate_messages(
+        raw_messages = self.swift_generator.generate_messages(
             count=self.config.MESSAGE_COUNT,
             bank_count=self.config.BANK_COUNT
         )
+        messages = []
+        for msg in raw_messages:
+            msg_dict = msg.model_dump(mode='json')
+            msg_dict['amount'] = f"{msg.amount} {msg.currency}"
+            messages.append(msg_dict)
         return messages
     
     def process_with_evaluator_optimizer(self, messages: List[Dict]) -> List[Dict]:
