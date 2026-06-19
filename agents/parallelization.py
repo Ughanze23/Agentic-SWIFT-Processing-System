@@ -7,12 +7,92 @@ You will add a third fraud detection agent and implement aggregation.
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Dict, Any
+import json
+import logging
 import time
 from agents.workflow_agents.base_agents import (
     FraudAmountDetectionAgent,
     FraudPatternDetectionAgent,
     FraudAggAgent
 )
+from services.llm_service import LLMService
+
+
+class AnomalyDetectionAgent:
+    """LLM-based agent that uses GPT-4o to detect anomalous patterns in SWIFT messages."""
+
+    def __init__(self):
+        self.logger = logging.getLogger(__name__)
+        self.llm_service = LLMService()
+
+    def analyze(self, message: Dict) -> Dict:
+        """
+        Use GPT-4o to analyze a SWIFT message for anomalous patterns
+        that rule-based agents might miss.
+
+        Args:
+            message: SWIFT message to analyze
+
+        Returns:
+            dict: Fraud analysis results with risk score and reasons
+        """
+        try:
+            prompt = f"""Analyze this SWIFT transaction for anomalies and fraud indicators.
+Consider unusual field combinations, timing patterns, naming conventions,
+and anything that deviates from normal banking transaction patterns.
+
+Transaction:
+- Message ID: {message.get('message_id', 'N/A')}
+- Type: {message.get('message_type', 'N/A')}
+- Amount: {message.get('amount', 'N/A')}
+- Sender BIC: {message.get('sender_bic', 'N/A')}
+- Receiver BIC: {message.get('receiver_bic', 'N/A')}
+- Reference: {message.get('reference', 'N/A')}
+- Remittance Info: {message.get('remittance_info', 'N/A')}
+- Ordering Customer: {message.get('ordering_customer', 'N/A')}
+- Beneficiary: {message.get('beneficiary', 'N/A')}
+- Value Date: {message.get('value_date', 'N/A')}
+
+Respond with JSON in this exact format:
+{{
+    "risk_score": 0.0 to 1.0,
+    "anomalies": ["list of detected anomalies"],
+    "reasoning": "brief explanation"
+}}"""
+
+            response = self.llm_service.client.chat.completions.create(
+                model=self.llm_service.model,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "You are an AI fraud analyst specializing in SWIFT transaction anomaly detection. "
+                        "Evaluate transactions for subtle anomalies that rule-based systems might miss. "
+                        "Be conservative — only flag genuinely suspicious patterns. "
+                        "Respond with JSON only."
+                    },
+                    {"role": "user", "content": prompt}
+                ],
+                response_format={"type": "json_object"},
+                temperature=0.1
+            )
+
+            result = json.loads(response.choices[0].message.content or "{}")
+            risk_score = float(result.get("risk_score", 0))
+            anomalies = result.get("anomalies", [])
+
+            return {
+                "agent": "AnomalyDetectionAgent",
+                "risk_score": min(risk_score, 1.0),
+                "fraud_reasons": anomalies
+            }
+
+        except Exception as e:
+            self.logger.error(f"AnomalyDetectionAgent error: {e}")
+            return {
+                "agent": "AnomalyDetectionAgent",
+                "risk_score": 0,
+                "fraud_reasons": []
+            }
 
 
 class GeographicRiskAgent:
@@ -66,7 +146,8 @@ class ParallelizationPattern:
         self.list_of_agents = [
             FraudAmountDetectionAgent(),
             FraudPatternDetectionAgent(),
-            GeographicRiskAgent()
+            GeographicRiskAgent(),
+            AnomalyDetectionAgent()
         ]
 
     def _process_message(self, message: Dict, agent: Any) -> Dict:
@@ -135,7 +216,7 @@ class ParallelizationPattern:
                 # Wait for all agents to complete for this message
                 for future in msg_data['futures']:
                     try:
-                        result = future.result(timeout=5)
+                        result = future.result(timeout=30)
                         agent_results.append(result)
                     except Exception as e:
                         print(f"Error getting result for message {msg_id}: {e}")

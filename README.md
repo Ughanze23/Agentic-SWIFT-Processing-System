@@ -54,8 +54,9 @@ Runs 3 fraud detection agents **simultaneously** on every message:
 | `FraudAmountDetectionAgent` | Large or suspiciously round amounts |
 | `FraudPatternDetectionAgent` | BIC test patterns, suspicious keywords |
 | `GeographicRiskAgent` | High/medium-risk country codes in BIC |
+| `AnomalyDetectionAgent` | LLM-based (GPT-4o) detection of subtle anomalies |
 
-Results are aggregated by `FraudAggAgent` (threshold: 50% avg risk score) and each message is marked `FRAUDULENT` or `CLEAN`.
+The first three agents are rule-based; the `AnomalyDetectionAgent` uses GPT-4o to catch subtle anomalies that rules might miss (unusual field combinations, naming conventions, timing patterns). Results are aggregated by `FraudAggAgent` (threshold: 50% avg risk score) and each message is marked `FRAUDULENT` or `CLEAN`.
 
 ### Step 3 — Prompt Chaining
 Passes messages through a chain of 5 AI agents in sequence, each building on the previous:
