@@ -7,8 +7,8 @@ breaks down work into tasks that are executed by generic workers.
 
 import json
 from typing import Dict, List, Any
-from openai import OpenAI
 from config import Config
+from services.llm_service import LLMService
 
 
 class OrchestratorWorkerPattern:
@@ -20,8 +20,9 @@ class OrchestratorWorkerPattern:
     def __init__(self):
         """Initialize the orchestrator-worker pattern."""
         self.config = Config()
-        self.client = OpenAI()
-        self.model = "gpt-4o"
+        self.llm_service = LLMService()
+        self.client = self.llm_service.client
+        self.model = self.llm_service.model
 
     # TODO 15: Create orchestrator (15 points)
     # INSTRUCTIONS:
@@ -63,10 +64,11 @@ class OrchestratorWorkerPattern:
         what tasks need to be performed.
         """
 
-        def __init__(self):
+        def __init__(self, llm_service: LLMService):
             """Initialize the Orchestrator."""
-            self.client = OpenAI()
-            self.model = "gpt-4o"
+            self.llm_service = llm_service
+            self.client = llm_service.client
+            self.model = llm_service.model
 
         def analyze_and_create_tasks(self, messages: List[Dict]) -> Dict:
             """
@@ -138,7 +140,7 @@ class OrchestratorWorkerPattern:
             }}"""
 
             try:
-                response = self.client.chat.completions.create(
+                response = self.llm_service.call_with_retry(
                     model=self.model,
                     messages=[
                         {"role": "system", "content": system_prompt},
@@ -160,10 +162,11 @@ class OrchestratorWorkerPattern:
         and execute them accordingly.
         """
 
-        def __init__(self):
+        def __init__(self, llm_service: LLMService):
             """Initialize the Generic Agent."""
-            self.client = OpenAI()
-            self.model = "gpt-4o"
+            self.llm_service = llm_service
+            self.client = llm_service.client
+            self.model = llm_service.model
 
         def execute_task(self, task: Dict) -> Dict:
             """
@@ -210,7 +213,7 @@ class OrchestratorWorkerPattern:
             Return your results in JSON format."""
 
             try:
-                response = self.client.chat.completions.create(
+                response = self.llm_service.call_with_retry(
                     model=self.model,
                     messages=[
                         {"role": "system", "content": system_prompt},
@@ -256,7 +259,7 @@ class OrchestratorWorkerPattern:
         print("=" * 60)
 
         # Step 1: Create orchestrator
-        orchestrator = self.Orchestrator()
+        orchestrator = self.Orchestrator(self.llm_service)
 
         # Step 2: Get tasks from orchestrator
         print("Orchestrator analyzing messages...")
@@ -266,7 +269,7 @@ class OrchestratorWorkerPattern:
         print(f"Tasks created: {orchestrator_response.get('task_count', 0)}")
 
         # Step 3: Create generic agent
-        agent = self.GenericAgent()
+        agent = self.GenericAgent(self.llm_service)
 
         # Step 4: Execute tasks
         results = []

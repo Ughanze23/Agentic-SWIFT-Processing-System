@@ -76,7 +76,7 @@ class SwiftCorrectionAgent(BaseAgent):
         system_prompt, user_prompt = self.create_prompt({'message': message, 'errors': errors})
 
         try:
-            response = self.llm_service.client.chat.completions.create(
+            response = self.llm_service.call_with_retry(
                 model=self.llm_service.model,
                 messages=[
                     {"role": "system", "content": system_prompt},

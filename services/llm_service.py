@@ -4,10 +4,11 @@ LLM service for fraud analysis and SWIFT message correction using OpenAI
 
 import json
 import logging
+import time
 from typing import Dict, List, Any
 import os
 
-from openai import OpenAI
+from openai import OpenAI, APIError, APIConnectionError, RateLimitError, APITimeoutError
 from models.swift_message import SWIFTMessage
 from config import Config
 
@@ -26,8 +27,48 @@ class LLMService:
         # do not change this unless explicitly requested by the user
         self.client = OpenAI(api_key=self.config.OPENAI_API_KEY)
         self.model = self.config.OPENAI_MODEL
-        
+        self.max_retries = 3
+        self.base_delay = 1.0  # seconds
+
         self.logger.info(f"LLM Service initialized with model: {self.model}")
+
+    def call_with_retry(self, **kwargs) -> Any:
+        """
+        Call OpenAI chat completions with exponential backoff retry.
+
+        Retries on transient errors (rate limits, timeouts, connection errors).
+        Raises on non-retryable errors (auth, bad request).
+
+        Args:
+            **kwargs: Arguments passed to client.chat.completions.create()
+
+        Returns:
+            The OpenAI chat completion response
+        """
+        last_exception = None
+        for attempt in range(self.max_retries):
+            try:
+                return self.client.chat.completions.create(**kwargs)
+            except (RateLimitError, APITimeoutError, APIConnectionError) as e:
+                last_exception = e
+                delay = self.base_delay * (2 ** attempt)
+                self.logger.warning(
+                    f"LLM call failed (attempt {attempt + 1}/{self.max_retries}): "
+                    f"{type(e).__name__}: {e}. Retrying in {delay:.1f}s..."
+                )
+                time.sleep(delay)
+            except APIError as e:
+                if e.status_code and e.status_code >= 500:
+                    last_exception = e
+                    delay = self.base_delay * (2 ** attempt)
+                    self.logger.warning(
+                        f"LLM server error (attempt {attempt + 1}/{self.max_retries}): "
+                        f"{e}. Retrying in {delay:.1f}s..."
+                    )
+                    time.sleep(delay)
+                else:
+                    raise
+        raise last_exception
     
     def review_suspicious_transaction(self, message: SWIFTMessage, fraud_score: float, 
                                     indicators: List[str]) -> Dict[str, Any]:
@@ -38,7 +79,7 @@ class LLMService:
         try:
             prompt = self._create_fraud_review_prompt(message, fraud_score, indicators)
             
-            response = self.client.chat.completions.create(
+            response = self.call_with_retry(
                 model=self.model,
                 messages=[
                     {
@@ -79,7 +120,7 @@ class LLMService:
         Get SWIFT message corrections from LLM
         """
         try:
-            response = self.client.chat.completions.create(
+            response = self.call_with_retry(
                 model=self.model,
                 messages=[
                     {
@@ -114,7 +155,7 @@ class LLMService:
         try:
             prompt = self._create_benford_analysis_prompt(amounts, deviation_score, p_value)
             
-            response = self.client.chat.completions.create(
+            response = self.call_with_retry(
                 model=self.model,
                 messages=[
                     {
@@ -280,7 +321,7 @@ Look for patterns that might indicate:
 Respond with JSON format analysis of suspicious patterns found.
 """
             
-            response = self.client.chat.completions.create(
+            response = self.call_with_retry(
                 model=self.model,
                 messages=[
                     {

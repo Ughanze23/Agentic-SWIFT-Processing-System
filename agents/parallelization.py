@@ -60,7 +60,7 @@ Respond with JSON in this exact format:
     "reasoning": "brief explanation"
 }}"""
 
-            response = self.llm_service.client.chat.completions.create(
+            response = self.llm_service.call_with_retry(
                 model=self.llm_service.model,
                 messages=[
                     {

@@ -7,8 +7,8 @@ Each agent in the chain builds upon the insights from previous agents.
 
 import json
 from typing import Dict, List, Any
-from openai import OpenAI
 from config import Config
+from services.llm_service import LLMService
 
 
 class PromptChainingPattern:
@@ -20,8 +20,9 @@ class PromptChainingPattern:
     def __init__(self):
         """Initialize the prompt chaining pattern with OpenAI client."""
         self.config = Config()
-        self.client = OpenAI()
-        self.model = "gpt-4o"
+        self.llm_service = LLMService()
+        self.client = self.llm_service.client
+        self.model = self.llm_service.model
         self.temperature = 0.1  # Low temperature for consistent analysis
 
     def _create_initial_screener_prompt(self, messages: List[Dict]) -> tuple:
@@ -222,7 +223,7 @@ class PromptChainingPattern:
             Parsed JSON response from the LLM
         """
         try:
-            response = self.client.chat.completions.create(
+            response = self.llm_service.call_with_retry(
                 model=self.model,
                 messages=[
                     {"role": "system", "content": system_prompt},
