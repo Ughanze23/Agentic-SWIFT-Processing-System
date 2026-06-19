@@ -95,6 +95,96 @@ class SwiftCorrectionAgent(BaseAgent):
             return message
 
 
+class EvaluatorAgent(BaseAgent):
+    """Agent for evaluating SWIFT messages against SWIFT standards."""
+
+    def __init__(self):
+        super().__init__()
+        self.SWIFT_STANDARDS = {
+            "max_reference_length": 16,
+            "max_amount": 999999999.99,
+            "min_amount": 0.01,
+            "required_fields": [
+                "message_type", "reference", "amount",
+                "sender_bic", "receiver_bic"
+            ],
+            "valid_message_types": ["MT103", "MT202"],
+            "valid_currencies": ["USD", "EUR", "GBP", "JPY", "CHF"]
+        }
+
+    def create_prompt(self, data: dict) -> str:
+        """Create a prompt describing the message for evaluation context."""
+        return f"Evaluate this SWIFT message for compliance: {data}"
+
+    def evaluate(self, message: dict) -> tuple:
+        """
+        Evaluate a SWIFT message against SWIFT standards.
+
+        Args:
+            message: The SWIFT message to evaluate
+
+        Returns:
+            Tuple of (is_valid, list_of_errors)
+        """
+        errors = []
+
+        for field in self.SWIFT_STANDARDS["required_fields"]:
+            if field not in message or not message[field]:
+                errors.append(f"Missing required field: {field}")
+
+        if message.get("message_type") not in self.SWIFT_STANDARDS["valid_message_types"]:
+            errors.append(f"Invalid message type: {message.get('message_type')}")
+
+        reference = message.get("reference", "")
+        if len(reference) > self.SWIFT_STANDARDS["max_reference_length"]:
+            errors.append(f"Reference too long: {len(reference)} chars (max {self.SWIFT_STANDARDS['max_reference_length']})")
+
+        try:
+            amount_str = message.get("amount", "0")
+            amount_value = float(''.join(c for c in amount_str.split()[0] if c.isdigit() or c == '.'))
+            if amount_value > self.SWIFT_STANDARDS["max_amount"]:
+                errors.append(f"Amount exceeds maximum: {amount_value}")
+            elif amount_value < self.SWIFT_STANDARDS["min_amount"]:
+                errors.append(f"Amount below minimum: {amount_value}")
+        except (ValueError, IndexError, AttributeError):
+            errors.append(f"Invalid amount format: {message.get('amount')}")
+
+        sender_bic = message.get("sender_bic", "")
+        receiver_bic = message.get("receiver_bic", "")
+
+        if not self._validate_bic(sender_bic):
+            errors.append(f"Invalid sender BIC: {sender_bic}")
+        if not self._validate_bic(receiver_bic):
+            errors.append(f"Invalid receiver BIC: {receiver_bic}")
+
+        if sender_bic and sender_bic == receiver_bic:
+            errors.append("Sender and receiver BIC cannot be the same")
+
+        if "amount" in message:
+            try:
+                currency = message["amount"].split()[-1]
+                if currency not in self.SWIFT_STANDARDS["valid_currencies"]:
+                    errors.append(f"Invalid currency: {currency}")
+            except (IndexError, AttributeError):
+                errors.append("Cannot extract currency from amount")
+
+        return len(errors) == 0, errors
+
+    def _validate_bic(self, bic: str) -> bool:
+        """Validate BIC format (8 or 11 characters)."""
+        if not bic or len(bic) not in [8, 11]:
+            return False
+        if not bic[:4].isalpha():
+            return False
+        if not bic[4:6].isalpha():
+            return False
+        if not bic[6:8].isalnum():
+            return False
+        if len(bic) == 11 and not bic[8:11].isalnum():
+            return False
+        return True
+
+
 class FraudAmountDetectionAgent:
     """Agent for detecting fraud based on transaction amounts."""
 

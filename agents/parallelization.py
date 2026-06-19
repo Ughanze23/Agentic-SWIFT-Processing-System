@@ -63,27 +63,6 @@ class ParallelizationPattern:
         """
         self.max_workers = max_workers
 
-        # Initialize fraud detection agents
-        # TODO 10: Create third agent (10 points)
-        # INSTRUCTIONS:
-        # 1. Add a third fraud detection agent to this list
-        # 2. You can create a new agent class or use one of the existing ones
-        # 3. Ideas for new agents:
-        #    - BenfordLawAgent: Check if amounts follow Benford's Law
-        #    - VelocityCheckAgent: Check transaction velocity/frequency
-        #    - GeographicRiskAgent: Check sender/receiver country risk
-        #    - TimeBasedRiskAgent: Check for unusual transaction times
-        #
-        # EXAMPLE:
-        # If you create a new agent class, define it in base_agents.py first
-        # Then add it here like:
-        # from agents.workflow_agents.base_agents import YourNewAgent
-        # list_of_agents = [
-        #     FraudAmountDetectionAgent(),
-        #     FraudPatternDetectionAgent(),
-        #     YourNewAgent()  # <-- Add your third agent here
-        # ]
-
         self.list_of_agents = [
             FraudAmountDetectionAgent(),
             FraudPatternDetectionAgent(),
@@ -209,45 +188,6 @@ class ParallelizationPattern:
             print(f"  Is Fraudulent: {aggregated['is_fraudulent']}")
             print(f"  Confidence: {aggregated['confidence']}%")
             print(f"  Total Risk Score: {aggregated['total_risk_score']}")
-
-
-# Example of how to create a custom fraud detection agent
-# You can use this as a template for TODO 10
-
-class CustomFraudAgent:
-    """
-    Example template for creating a custom fraud detection agent.
-    You can modify this for your third agent in TODO 10.
-    """
-
-    def __init__(self):
-        # Initialize any rules or thresholds your agent needs
-        self.threshold = 0.5
-
-    def analyze(self, message: Dict) -> Dict:
-        """
-        Analyze a message for fraud indicators.
-
-        Args:
-            message: SWIFT message to analyze
-
-        Returns:
-            Dictionary with:
-                - agent: Name of this agent
-                - risk_score: Float between 0 and 1
-                - fraud_reasons: List of reasons for the risk score
-        """
-        risk_score = 0
-        fraud_reasons = []
-
-        # Add your fraud detection logic here
-        # Example: Check for specific patterns, amounts, or behaviors
-
-        return {
-            "agent": self.__class__.__name__,
-            "risk_score": min(risk_score, 1.0),  # Keep between 0 and 1
-            "fraud_reasons": fraud_reasons
-        }
 
 
 if __name__ == "__main__":
