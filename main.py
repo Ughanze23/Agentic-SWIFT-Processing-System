@@ -63,7 +63,6 @@ class SWIFTProcessingSystem:
 
         # Call the evaluator optimizer's process method
         validated_messages = self.evaluator_optimizer.process_with_evaluator_optimizer(messages)
-        self.explainability_logger.log_evaluator_optimizer(validated_messages)
         return validated_messages
 
     def process_with_parallelization(self, messages: List[Dict]) -> List[Dict]:
@@ -78,7 +77,6 @@ class SWIFTProcessingSystem:
 
         # Process messages in parallel using fraud detection agents
         processed_messages = self.parallelization_agent.process_batch_parallel(messages)
-        self.explainability_logger.log_parallelization(processed_messages)
         return processed_messages
 
     def process_with_prompt_chaining(self, messages: List[Dict]) -> Dict:
@@ -93,7 +91,6 @@ class SWIFTProcessingSystem:
 
         # Process through the chain of agents
         chain_results = self.prompt_chaining_agent.process_chain(messages)
-        self.explainability_logger.log_prompt_chaining(chain_results)
         return chain_results
 
     def process_with_orchestrator_worker(self, messages: List[Dict]) -> None:
@@ -120,8 +117,7 @@ class SWIFTProcessingSystem:
                 pass
 
         # Process with orchestrator
-        orchestrator_results = self.orchestrator_worker.process_with_orchestrator(clean_messages)
-        self.explainability_logger.log_orchestrator_worker(orchestrator_results)
+        return self.orchestrator_worker.process_with_orchestrator(clean_messages)
         
     
     def run(self):
@@ -137,12 +133,18 @@ class SWIFTProcessingSystem:
             print(f"Generated {len(messages)} SWIFT messages")
 
             validated_messages = self.process_with_evaluator_optimizer(messages)
+            self.explainability_logger.log_evaluator_optimizer(validated_messages)
 
             processed_messages = self.process_with_parallelization(validated_messages)
+            self.explainability_logger.log_parallelization(processed_messages)
 
             chain_results = self.process_with_prompt_chaining(processed_messages)
+            self.explainability_logger.log_prompt_chaining(processed_messages, chain_results)
 
-            self.process_with_orchestrator_worker(processed_messages)
+            orchestrator_results = self.process_with_orchestrator_worker(processed_messages)
+            self.explainability_logger.log_orchestrator_worker(orchestrator_results)
+
+            self.explainability_logger.flush()
 
             print("\n" + "=" * 60)
             print("PROCESSING COMPLETE")
