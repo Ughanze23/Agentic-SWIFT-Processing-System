@@ -25,23 +25,25 @@ class BaseAgent(ABC):
         return self.llm_service.get_swift_correction(prompt)
 
 
-class SwiftCorrectionAgent:
+class SwiftCorrectionAgent(BaseAgent):
     """Agent for correcting SWIFT messages based on validation errors."""
 
     def __init__(self):
-        self.llm_service = LLMService()
+        super().__init__()
 
-    def create_prompt(self, message, errors):
+    def create_prompt(self, data: dict) -> tuple:
         """
-        Create a prompt for the LLM to correct a SWIFT message.
+        Create prompts for the LLM to correct a SWIFT message.
 
         Args:
-            message: The SWIFT message data
-            errors: List of validation errors to fix
+            data: Dict with 'message' and 'errors' keys
 
         Returns:
-            str: The formatted prompt for the LLM
+            Tuple of (system_prompt, user_prompt)
         """
+        message = data.get('message')
+        errors = data.get('errors')
+
         system_prompt = """You are a SWIFT message correction expert.
         Fix the validation errors while maintaining the business intent.
         Return the corrected message in JSON format."""
@@ -70,14 +72,12 @@ class SwiftCorrectionAgent:
             dict: The corrected message data
         """
         import json
-        from openai import OpenAI
 
-        system_prompt, user_prompt = self.create_prompt(message, errors)
+        system_prompt, user_prompt = self.create_prompt({'message': message, 'errors': errors})
 
         try:
-            client = OpenAI()
-            response = client.chat.completions.create(
-                model="gpt-4o",
+            response = self.llm_service.client.chat.completions.create(
+                model=self.llm_service.model,
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
@@ -92,7 +92,7 @@ class SwiftCorrectionAgent:
 
         except Exception as e:
             print(f"Error in SwiftCorrectionAgent: {e}")
-            return message  # Return original if correction fails
+            return message
 
 
 class FraudAmountDetectionAgent:
