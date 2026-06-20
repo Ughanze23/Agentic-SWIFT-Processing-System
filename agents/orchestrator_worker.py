@@ -2,7 +2,8 @@
 Orchestrator-Worker Pattern for Task Distribution
 
 This module implements the orchestrator-worker pattern where an orchestrator
-breaks down work into tasks that are executed by generic workers.
+analyzes a batch of SWIFT messages, proposes a grouping plan (e.g. by currency,
+bank, or risk tier), and workers produce a structured report per group.
 """
 
 import json
@@ -14,7 +15,7 @@ from services.llm_service import LLMService
 class OrchestratorWorkerPattern:
     """
     Implements the orchestrator-worker pattern for SWIFT message processing.
-    The orchestrator analyzes messages and creates tasks for generic workers.
+    The orchestrator proposes a grouping plan and workers produce reports per group.
     """
 
     def __init__(self):
@@ -24,120 +25,73 @@ class OrchestratorWorkerPattern:
         self.client = self.llm_service.client
         self.model = self.llm_service.model
 
-    # TODO 15: Create orchestrator (15 points)
-    # INSTRUCTIONS:
-    # This is the main TODO where you'll implement the complete orchestrator-worker pattern.
-    # You need to:
-    # 1. Create an Orchestrator class that analyzes messages and creates tasks
-    # 2. Create a GenericAgent class that executes tasks
-    # 3. Implement the process_with_orchestrator method to coordinate them
-    #
-    # DETAILED STEPS:
-    #
-    # Step 1: Create the Orchestrator class below this comment
-    # The Orchestrator should:
-    #   - Take a batch of messages
-    #   - Analyze them and create a list of tasks
-    #   - Return tasks with type and description
-    #
-    # Step 2: Create the GenericAgent class
-    # The GenericAgent should:
-    #   - Take a task (with type and description)
-    #   - Execute the task according to its type
-    #   - Return results
-    #
-    # Step 3: Implement process_with_orchestrator
-    # This method should:
-    #   - Create an orchestrator instance
-    #   - Get tasks from the orchestrator
-    #   - Create generic agent(s)
-    #   - Execute tasks with the agents
-    #   - Print/return results
-
-    # YOUR CODE STARTS HERE
-
     class Orchestrator:
         """
-        Orchestrator that analyzes messages and creates tasks for workers.
-
-        HINT: This class should use the LLM to analyze messages and determine
-        what tasks need to be performed.
+        Orchestrator that analyzes messages and proposes a grouping plan.
+        It partitions messages into named groups by a chosen dimension
+        (currency, bank, risk tier, message type, etc.) and creates
+        one report task per group for workers to execute.
         """
 
         def __init__(self, llm_service: LLMService):
             """Initialize the Orchestrator."""
             self.llm_service = llm_service
-            self.client = llm_service.client
             self.model = llm_service.model
 
         def analyze_and_create_tasks(self, messages: List[Dict]) -> Dict:
             """
-            Analyze messages and create tasks for workers.
+            Analyze messages, propose a grouping plan, and create one
+            report task per group.
 
             Args:
                 messages: List of SWIFT messages to analyze
 
             Returns:
-                Dictionary containing analysis and list of tasks
-
-            HINT: Create a prompt that asks the LLM to:
-            1. Analyze the batch of messages
-            2. Identify what processing tasks are needed
-            3. Return a structured list of tasks
-
-            Example task structure:
-            {
-                "analysis": "Summary of the message batch",
-                "tasks": [
-                    {
-                        "task_id": "task_001",
-                        "type": "compliance_check",
-                        "description": "Check sender BIC against sanctions list",
-                        "priority": "high",
-                        "data": {...}
-                    },
-                    {
-                        "task_id": "task_002",
-                        "type": "amount_analysis",
-                        "description": "Analyze transaction amounts for patterns",
-                        "priority": "medium",
-                        "data": {...}
-                    }
-                ]
-            }
+                Dictionary with grouping plan and tasks
             """
-            # Create system prompt for orchestrator
             system_prompt = """You are an Orchestrator for SWIFT transaction processing.
-            Analyze the provided messages and create specific tasks for workers.
 
-            Task types you can create:
-            - compliance_check: Check for regulatory compliance
-            - fraud_analysis: Detailed fraud investigation
-            - amount_verification: Verify and analyze amounts
-            - pattern_detection: Detect unusual patterns
-            - summary_report: Create summary reports
+Your job is to:
+1. Examine the batch of messages.
+2. Choose the BEST grouping dimension for analysis. Pick ONE of:
+   - currency (group by the currency in the amount field)
+   - sender_bank (group by sender BIC)
+   - receiver_bank (group by receiver BIC)
+   - message_type (group by MT103 / MT202)
+   - risk_tier (group by fraud_status or fraud_score)
+   Choose whichever dimension produces the most useful analytical grouping
+   for this particular batch.
+3. Partition every message_id into exactly one group.
+4. Create one summary_report task per group.
 
-            Return JSON with your analysis and a list of specific tasks."""
+Return JSON only."""
 
-            # Create user prompt with messages
-            user_prompt = f"""Analyze these SWIFT messages and create processing tasks:
+            user_prompt = f"""Analyze these SWIFT messages and propose a grouping plan:
 
-            {json.dumps(messages, indent=2)}
+{json.dumps(messages, indent=2, default=str)}
 
-            Return JSON with structure:
-            {{
-                "analysis": "Your analysis of the message batch",
-                "task_count": number,
-                "tasks": [
-                    {{
-                        "task_id": "unique_id",
-                        "type": "task_type",
-                        "description": "What needs to be done",
-                        "priority": "high|medium|low",
-                        "data": "relevant data for the task"
-                    }}
-                ]
-            }}"""
+Return JSON with this exact structure:
+{{
+    "analysis": "Brief analysis of the message batch",
+    "group_by": "the dimension you chose (e.g. currency, sender_bank, message_type, risk_tier)",
+    "groups": [
+        {{
+            "group_key": "the group value (e.g. USD, MT103, CLEAN)",
+            "message_ids": ["list", "of", "message_ids", "in", "this", "group"]
+        }}
+    ],
+    "tasks": [
+        {{
+            "task_id": "group_report_001",
+            "type": "summary_report",
+            "group_key": "the group value this task covers",
+            "description": "Produce a compliance and risk summary report for this group",
+            "message_ids": ["same", "message_ids", "as", "the", "group"]
+        }}
+    ]
+}}
+
+Every message_id must appear in exactly one group. Create one task per group."""
 
             try:
                 response = self.llm_service.call_with_retry(
@@ -156,61 +110,52 @@ class OrchestratorWorkerPattern:
 
     class GenericAgent:
         """
-        Generic worker agent that executes tasks assigned by the orchestrator.
-
-        HINT: This agent should be able to handle different task types
-        and execute them accordingly.
+        Worker agent that produces a structured report for a group of
+        messages assigned by the orchestrator.
         """
 
         def __init__(self, llm_service: LLMService):
             """Initialize the Generic Agent."""
             self.llm_service = llm_service
-            self.client = llm_service.client
             self.model = llm_service.model
 
-        def execute_task(self, task: Dict) -> Dict:
+        def execute_task(self, task: Dict, group_messages: List[Dict]) -> Dict:
             """
-            Execute a task assigned by the orchestrator.
+            Produce a report for a group of messages.
 
             Args:
-                task: Task dictionary with type, description, and data
+                task: Task dictionary from the orchestrator
+                group_messages: The actual message dicts belonging to this group
 
             Returns:
-                Dictionary with task results
-
-            HINT: Based on the task type, create appropriate prompts
-            and execute the task using the LLM.
+                Dictionary with the group report
             """
-            task_type = task.get('type', 'unknown')
+            group_key = task.get('group_key', 'unknown')
             description = task.get('description', '')
-            task_data = task.get('data', {})
 
-            # Create prompts based on task type
-            if task_type == 'compliance_check':
-                system_prompt = """You are a Compliance Specialist.
-                Execute the compliance check as described."""
-            elif task_type == 'fraud_analysis':
-                system_prompt = """You are a Fraud Analyst.
-                Perform detailed fraud analysis as requested."""
-            elif task_type == 'amount_verification':
-                system_prompt = """You are a Financial Auditor.
-                Verify and analyze the amounts as specified."""
-            elif task_type == 'pattern_detection':
-                system_prompt = """You are a Pattern Analysis Expert.
-                Detect and report unusual patterns."""
-            elif task_type == 'summary_report':
-                system_prompt = """You are a Report Generator.
-                Create the requested summary report."""
-            else:
-                system_prompt = """You are a Generic Processing Agent.
-                Complete the assigned task."""
+            system_prompt = """You are a SWIFT Transaction Report Generator.
+Produce a structured compliance and risk summary report for the assigned
+group of transactions. Be specific about amounts, parties, and risk factors.
+Return JSON only."""
 
-            user_prompt = f"""Execute this task:
-            Type: {task_type}
-            Description: {description}
-            Data: {json.dumps(task_data, indent=2)}
+            user_prompt = f"""Generate a report for this group of transactions.
 
-            Return your results in JSON format."""
+Group Key: {group_key}
+Task: {description}
+
+Transactions in this group:
+{json.dumps(group_messages, indent=2, default=str)}
+
+Return JSON with this structure:
+{{
+    "group_key": "{group_key}",
+    "transaction_count": number,
+    "total_amount": "sum with currency",
+    "risk_summary": "overall risk assessment for this group",
+    "key_findings": ["list of notable findings"],
+    "compliance_status": "PASS or REVIEW_NEEDED",
+    "recommendations": ["list of recommendations"]
+}}"""
 
             try:
                 response = self.llm_service.call_with_retry(
@@ -229,70 +174,76 @@ class OrchestratorWorkerPattern:
 
             return {
                 "task_id": task.get('task_id'),
+                "group_key": group_key,
                 "status": "completed",
                 "results": results
             }
-
-    # YOUR CODE ENDS HERE
 
     def process_with_orchestrator(self, messages: List[Dict]) -> Dict:
         """
         Process messages using the orchestrator-worker pattern.
 
+        1. Orchestrator proposes a grouping plan
+        2. Messages are partitioned into groups
+        3. A worker produces a report for each group
+
         Args:
             messages: List of SWIFT messages to process
 
         Returns:
-            Processing results from the orchestrator-worker system
-
-        TODO 15 IMPLEMENTATION:
-        This method should:
-        1. Create an Orchestrator instance
-        2. Call analyze_and_create_tasks to get tasks
-        3. Create one or more GenericAgent instances
-        4. Execute each task using the generic agents
-        5. Collect and return all results
-        6. Print a summary of what was accomplished
+            Processing results with grouping plan and per-group reports
         """
         print("=" * 60)
         print("ORCHESTRATOR-WORKER PATTERN PROCESSING")
         print("=" * 60)
 
-        # Step 1: Create orchestrator
+        # Step 1: Orchestrator proposes grouping plan
         orchestrator = self.Orchestrator(self.llm_service)
-
-        # Step 2: Get tasks from orchestrator
-        print("Orchestrator analyzing messages...")
+        print("Orchestrator analyzing messages and proposing grouping plan...")
         orchestrator_response = orchestrator.analyze_and_create_tasks(messages)
 
-        print(f"Orchestrator Analysis: {orchestrator_response.get('analysis', 'No analysis')}")
-        print(f"Tasks created: {orchestrator_response.get('task_count', 0)}")
-
-        # Step 3: Create generic agent
-        agent = self.GenericAgent(self.llm_service)
-
-        # Step 4: Execute tasks
-        results = []
+        group_by = orchestrator_response.get('group_by', 'unknown')
+        groups = orchestrator_response.get('groups', [])
         tasks = orchestrator_response.get('tasks', [])
 
-        for task in tasks:
-            print(f"Executing task: {task.get('task_id')} - {task.get('description')}")
-            result = agent.execute_task(task)
-            results.append(result)
-            print(f"Task {task.get('task_id')} completed")
+        print(f"Orchestrator Analysis: {orchestrator_response.get('analysis', 'No analysis')}")
+        print(f"Grouping dimension: {group_by}")
+        print(f"Groups created: {len(groups)}")
+        for g in groups:
+            print(f"  - {g.get('group_key')}: {len(g.get('message_ids', []))} message(s)")
+        print(f"Tasks created: {len(tasks)}")
 
-        # Step 5: Return results
+        # Build a lookup from message_id to message dict
+        msg_lookup = {m.get('message_id'): m for m in messages}
+
+        # Step 2: Worker produces a report per group
+        agent = self.GenericAgent(self.llm_service)
+        results = []
+
+        for task in tasks:
+            group_key = task.get('group_key', 'unknown')
+            task_msg_ids = task.get('message_ids', [])
+            group_messages = [msg_lookup[mid] for mid in task_msg_ids if mid in msg_lookup]
+
+            print(f"Worker reporting on group '{group_key}' ({len(group_messages)} messages)...")
+            result = agent.execute_task(task, group_messages)
+            results.append(result)
+            print(f"  Group '{group_key}' report completed")
+
+        # Summary
+        print(f"\nOrchestrator-Worker Summary: {len(results)} group reports produced "
+              f"(grouped by {group_by})")
+
         return {
             'orchestrator_analysis': orchestrator_response,
+            'group_by': group_by,
+            'groups': groups,
             'task_results': results,
-            'summary': f"Processed {len(tasks)} tasks for {len(messages)} messages"
+            'summary': f"Produced {len(results)} group reports for {len(messages)} messages (grouped by {group_by})"
         }
 
     def test_orchestrator(self):
-        """
-        Test method for the orchestrator-worker pattern.
-        You can use this to verify your implementation.
-        """
+        """Test method for the orchestrator-worker pattern."""
         test_messages = [
             {
                 'message_id': 'MSG001',
@@ -301,7 +252,8 @@ class OrchestratorWorkerPattern:
                 'sender_bic': 'CHASUS33XXX',
                 'receiver_bic': 'DEUTDEFFXXX',
                 'reference': 'TRX20240101001',
-                'remittance_info': 'Payment for equipment purchase'
+                'remittance_info': 'Payment for equipment purchase',
+                'fraud_status': 'CLEAN'
             },
             {
                 'message_id': 'MSG002',
@@ -310,7 +262,18 @@ class OrchestratorWorkerPattern:
                 'sender_bic': 'BNPAFRPPXXX',
                 'receiver_bic': 'BARCGB22XXX',
                 'reference': 'COV20240101002',
-                'remittance_info': 'Cover payment'
+                'remittance_info': 'Cover payment',
+                'fraud_status': 'CLEAN'
+            },
+            {
+                'message_id': 'MSG003',
+                'message_type': 'MT103',
+                'amount': '25000.00 USD',
+                'sender_bic': 'CHASUS33XXX',
+                'receiver_bic': 'BARCGB22XXX',
+                'reference': 'TRX20240101003',
+                'remittance_info': 'Supplier payment',
+                'fraud_status': 'FRAUDULENT'
             }
         ]
 
@@ -322,52 +285,18 @@ class OrchestratorWorkerPattern:
         print("=" * 60)
 
         if results:
-            print(f"Results obtained: {type(results)}")
-            if isinstance(results, dict):
-                for key, value in results.items():
-                    print(f"{key}: {value if not isinstance(value, list) else f'{len(value)} items'}")
+            print(f"Group by: {results.get('group_by')}")
+            print(f"Groups: {len(results.get('groups', []))}")
+            for r in results.get('task_results', []):
+                print(f"\n  Group '{r.get('group_key')}':")
+                report = r.get('results', {})
+                print(f"    Transactions: {report.get('transaction_count')}")
+                print(f"    Risk: {report.get('risk_summary', 'N/A')}")
+                print(f"    Compliance: {report.get('compliance_status', 'N/A')}")
 
         return results
 
 
-# Hint for You: You can test individual components
-class TestHelper:
-    """
-    Helper class for testing individual components.
-    You can use this to debug your implementations.
-    """
-
-    @staticmethod
-    def test_orchestrator_only():
-        """Test just the Orchestrator class."""
-        print("Testing Orchestrator in isolation...")
-        # Create an instance of the Orchestrator
-        # Test with sample messages
-        # Print the tasks it creates
-        pass
-
-    @staticmethod
-    def test_generic_agent_only():
-        """Test just the GenericAgent class."""
-        print("Testing GenericAgent in isolation...")
-        sample_task = {
-            'task_id': 'test_001',
-            'type': 'compliance_check',
-            'description': 'Check if sender BIC is valid',
-            'data': {'sender_bic': 'CHASUS33XXX'}
-        }
-        # Create an instance of GenericAgent
-        # Execute the sample task
-        # Print the results
-        pass
-
-
 if __name__ == "__main__":
-    # Test the orchestrator-worker pattern
-    # Note: Requires OPENAI_API_KEY environment variable
     pattern = OrchestratorWorkerPattern()
     pattern.test_orchestrator()
-
-    # Uncomment to test individual components:
-    # TestHelper.test_orchestrator_only()
-    # TestHelper.test_generic_agent_only()
