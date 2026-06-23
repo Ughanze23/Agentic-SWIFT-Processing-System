@@ -20,6 +20,7 @@ from agents.parallelization import ParallelizationPattern
 from agents.orchestrator_worker import OrchestratorWorkerPattern
 from agents.prompt_chaining import PromptChainingPattern
 from services.explainability_logger import ExplainabilityLogger
+from services.metrics_collector import MetricsCollector
 
 
 class SWIFTProcessingSystem:
@@ -37,7 +38,27 @@ class SWIFTProcessingSystem:
         self.orchestrator_worker = OrchestratorWorkerPattern()
         self.prompt_chaining_agent = PromptChainingPattern()
         self.explainability_logger = ExplainabilityLogger()
+        self.metrics = MetricsCollector()
+
+        # Wire metrics collector into all LLM services
+        for pattern in [self.evaluator_optimizer, self.parallelization_agent,
+                        self.orchestrator_worker, self.prompt_chaining_agent]:
+            self._inject_metrics(pattern)
     
+    def _inject_metrics(self, pattern):
+        """Inject the metrics collector into any LLM service found on a pattern."""
+        if hasattr(pattern, 'llm_service'):
+            pattern.llm_service.metrics_collector = self.metrics
+        # Evaluator-optimizer has agents with their own LLM services
+        for attr_name in ['correction_agent', 'evaluator_agent']:
+            agent = getattr(pattern, attr_name, None)
+            if agent and hasattr(agent, 'llm_service'):
+                agent.llm_service.metrics_collector = self.metrics
+        # Parallelization has a list of agents
+        for agent in getattr(pattern, 'list_of_agents', []):
+            if hasattr(agent, 'llm_service'):
+                agent.llm_service.metrics_collector = self.metrics
+
     def generate_swift_messages(self) -> List[Dict]:
         """Generate SWIFT messages for testing"""
         raw_messages = self.swift_generator.generate_messages(
@@ -125,9 +146,25 @@ class SWIFTProcessingSystem:
         return results
         
     
+    def _set_llm_step(self, step_name: str):
+        """Set the current step label on all LLM services for metrics tagging."""
+        for pattern in [self.evaluator_optimizer, self.parallelization_agent,
+                        self.orchestrator_worker, self.prompt_chaining_agent]:
+            if hasattr(pattern, 'llm_service'):
+                pattern.llm_service._current_step = step_name
+            for attr_name in ['correction_agent', 'evaluator_agent']:
+                agent = getattr(pattern, attr_name, None)
+                if agent and hasattr(agent, 'llm_service'):
+                    agent.llm_service._current_step = step_name
+            for agent in getattr(pattern, 'list_of_agents', []):
+                if hasattr(agent, 'llm_service'):
+                    agent.llm_service._current_step = step_name
+
     def run(self):
         """Main execution method - Orchestrates all agent patterns in sequence"""
         try:
+            self.metrics.start_run()
+
             print("=" * 60)
             print("SWIFT TRANSACTION PROCESSING SYSTEM")
             print("=" * 60)
@@ -137,16 +174,62 @@ class SWIFTProcessingSystem:
             messages = self.generate_swift_messages()
             print(f"Generated {len(messages)} SWIFT messages")
 
+            # Step 2: Evaluator-Optimizer
+            self._set_llm_step("evaluator_optimizer")
+            self.metrics.start_step("evaluator_optimizer")
             validated_messages = self.process_with_evaluator_optimizer(messages)
+            self.metrics.end_step("evaluator_optimizer", len(validated_messages))
             self.explainability_logger.log_evaluator_optimizer(validated_messages)
 
+            valid_count = sum(1 for m in validated_messages if m.get('validation_status') == 'VALID')
+            invalid_count = len(validated_messages) - valid_count
+            self.metrics.record_operational_stats("evaluator_optimizer", {
+                "total": len(validated_messages),
+                "valid": valid_count,
+                "invalid": invalid_count,
+                "stp_rate": round(valid_count / len(validated_messages), 3) if validated_messages else 0,
+                "manual_repair_rate": round(invalid_count / len(validated_messages), 3) if validated_messages else 0,
+            })
+
+            # Step 3: Parallelization (fraud detection)
+            self._set_llm_step("parallelization")
+            self.metrics.start_step("parallelization")
             processed_messages = self.process_with_parallelization(validated_messages)
+            self.metrics.end_step("parallelization", len(processed_messages))
             self.explainability_logger.log_parallelization(processed_messages)
 
+            fraud_count = sum(1 for m in processed_messages if m.get('fraud_status') == 'FRAUDULENT')
+            clean_count = len(processed_messages) - fraud_count
+            self.metrics.record_operational_stats("parallelization", {
+                "total": len(processed_messages),
+                "fraudulent": fraud_count,
+                "clean": clean_count,
+                "fraud_flag_rate": round(fraud_count / len(processed_messages), 3) if processed_messages else 0,
+            })
+
+            # Step 4: Prompt Chaining
+            self._set_llm_step("prompt_chaining")
+            self.metrics.start_step("prompt_chaining")
             chain_results = self.process_with_prompt_chaining(processed_messages)
+            self.metrics.end_step("prompt_chaining", len(processed_messages))
             self.explainability_logger.log_prompt_chaining(processed_messages, chain_results)
 
+            final_decisions = chain_results.get('final_review', {}).get('final_decisions', [])
+            decision_counts = {"APPROVE": 0, "HOLD": 0, "REJECT": 0}
+            for d in final_decisions:
+                dec = d.get('decision', 'UNKNOWN')
+                if dec in decision_counts:
+                    decision_counts[dec] += 1
+            self.metrics.record_operational_stats("prompt_chaining", {
+                "total": len(processed_messages),
+                "decisions": decision_counts,
+            })
+
+            # Step 5: Orchestrator-Worker
+            self._set_llm_step("orchestrator_worker")
+            self.metrics.start_step("orchestrator_worker")
             orchestrator_results = self.process_with_orchestrator_worker(processed_messages)
+            self.metrics.end_step("orchestrator_worker", len(processed_messages))
             self.explainability_logger.log_orchestrator_worker(
                 orchestrator_results.get('run_1_non_fraudulent')
             )
@@ -154,7 +237,18 @@ class SWIFTProcessingSystem:
                 orchestrator_results.get('run_2_high_value')
             )
 
+            run1 = orchestrator_results.get('run_1_non_fraudulent', {})
+            run2 = orchestrator_results.get('run_2_high_value', {})
+            self.metrics.record_operational_stats("orchestrator_worker", {
+                "run_1_groups": len(run1.get('groups', [])),
+                "run_1_tasks": len(run1.get('task_results', [])),
+                "run_2_groups": len(run2.get('groups', [])),
+                "run_2_tasks": len(run2.get('task_results', [])),
+            })
+
+            self.metrics.end_run()
             self.explainability_logger.flush()
+            self.metrics.save()
 
             print("\n" + "=" * 60)
             print("PROCESSING COMPLETE")

@@ -17,11 +17,11 @@ class LLMService:
     """
     Service for LLM-based fraud analysis and SWIFT message correction
     """
-    
+
     def __init__(self):
         self.logger = logging.getLogger(__name__)
         self.config = Config()
-        
+
         # Initialize OpenAI client
         # the newest OpenAI model is "gpt-4o" which was released May 13, 2024.
         # do not change this unless explicitly requested by the user
@@ -29,6 +29,8 @@ class LLMService:
         self.model = self.config.OPENAI_MODEL
         self.max_retries = 3
         self.base_delay = 1.0  # seconds
+        self.metrics_collector = None
+        self._current_step = "unknown"
 
         self.logger.info(f"LLM Service initialized with model: {self.model}")
 
@@ -48,7 +50,16 @@ class LLMService:
         last_exception = None
         for attempt in range(self.max_retries):
             try:
-                return self.client.chat.completions.create(**kwargs)
+                response = self.client.chat.completions.create(**kwargs)
+                if self.metrics_collector and response.usage:
+                    self.metrics_collector.record_llm_call(
+                        step=self._current_step,
+                        prompt_tokens=response.usage.prompt_tokens,
+                        completion_tokens=response.usage.completion_tokens,
+                        model=kwargs.get("model", self.model),
+                        retries=attempt,
+                    )
+                return response
             except (RateLimitError, APITimeoutError, APIConnectionError) as e:
                 last_exception = e
                 delay = self.base_delay * (2 ** attempt)
